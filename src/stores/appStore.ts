@@ -1,11 +1,26 @@
 import { create } from 'zustand'
 import { persist } from 'zustand/middleware'
-import type { ExcelData, LLMSettings, AnalysisResult, Theme } from '../types'
+import type { ExcelData, SheetData } from '../services/excelService'
+import type { AnalysisResult } from '../services/mcpService'
+
+export interface LLMSettings {
+  model: string
+  temperature: number
+  maxTokens: number
+  apiKey: string
+  baseUrl: string
+}
 
 interface AppState {
   // Theme
   theme: 'light' | 'dark'
   setTheme: (theme: 'light' | 'dark') => void
+
+  // MCP connection
+  mcpEnabled: boolean
+  mcpConnected: boolean
+  setMCPEnabled: (enabled: boolean) => void
+  setMCPConnected: (connected: boolean) => void
 
   // Excel data
   excelData: ExcelData | null
@@ -21,6 +36,11 @@ interface AppState {
   stage2Result: AnalysisResult | null
   stage3Result: AnalysisResult | null
   setStageResult: (stage: 1 | 2 | 3, result: AnalysisResult | null) => void
+  
+  // Analysis questions
+  stage2Question: string
+  stage3Question: string
+  setStageQuestion: (stage: 2 | 3, question: string) => void
 
   // UI state
   sidebarCollapsed: boolean
@@ -40,6 +60,12 @@ export const useAppStore = create<AppState>()(
       theme: 'light',
       setTheme: (theme) => set({ theme }),
 
+      // MCP connection
+      mcpEnabled: true,
+      mcpConnected: false,
+      setMCPEnabled: (enabled) => set({ mcpEnabled: enabled }),
+      setMCPConnected: (connected) => set({ mcpConnected: connected }),
+
       // Excel data
       excelData: null,
       setExcelData: (data) => set({ excelData: data }),
@@ -57,11 +83,11 @@ export const useAppStore = create<AppState>()(
 
       // LLM settings
       llmSettings: {
-        model: 'gpt-3.5-turbo',
+        model: 'grok-3-mini',
         temperature: 0.7,
         maxTokens: 2000,
         apiKey: '',
-        baseUrl: 'https://api.openai.com/v1',
+        baseUrl: 'http://48.210.12.198:3000/v1',
       },
       updateLLMSettings: (settings) =>
         set((state) => ({
@@ -76,6 +102,14 @@ export const useAppStore = create<AppState>()(
         const key = `stage${stage}Result` as keyof Pick<AppState, 'stage1Result' | 'stage2Result' | 'stage3Result'>
         set({ [key]: result })
       },
+      
+      // Analysis questions
+      stage2Question: '',
+      stage3Question: '',
+      setStageQuestion: (stage, question) => {
+        const key = `stage${stage}Question` as keyof Pick<AppState, 'stage2Question' | 'stage3Question'>
+        set({ [key]: question })
+      },
 
       // UI state
       sidebarCollapsed: false,
@@ -89,6 +123,8 @@ export const useAppStore = create<AppState>()(
           stage1Result: null,
           stage2Result: null,
           stage3Result: null,
+          stage2Question: '',
+          stage3Question: '',
         }),
       resetAll: () =>
         set({
@@ -96,6 +132,8 @@ export const useAppStore = create<AppState>()(
           stage1Result: null,
           stage2Result: null,
           stage3Result: null,
+          stage2Question: '',
+          stage3Question: '',
           isProcessing: false,
         }),
     }),
@@ -105,6 +143,7 @@ export const useAppStore = create<AppState>()(
         theme: state.theme,
         llmSettings: state.llmSettings,
         sidebarCollapsed: state.sidebarCollapsed,
+        mcpEnabled: state.mcpEnabled,
       }),
     }
   )

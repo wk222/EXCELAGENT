@@ -5,12 +5,12 @@ import toast from 'react-hot-toast'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '../components/ui/Card'
 import { Button } from '../components/ui/Button'
 import { useAppStore } from '../stores/appStore'
-import { ExcelProcessor } from '../utils/excelProcessor'
+import { ExcelService } from '../services/excelService'
 import { cn } from '../utils/cn'
 
 export function HomePage() {
   const navigate = useNavigate()
-  const { excelData, setExcelData, resetAll } = useAppStore()
+  const { excelData, setExcelData, resetAll, mcpEnabled, mcpConnected } = useAppStore()
   const [isDragOver, setIsDragOver] = useState(false)
   const [isProcessing, setIsProcessing] = useState(false)
 
@@ -38,7 +38,7 @@ export function HomePage() {
     const loadingToast = toast.loading('正在解析Excel文件...')
 
     try {
-      const data = await ExcelProcessor.processFile(file)
+      const data = await ExcelService.processFile(file)
       setExcelData(data)
       
       toast.success('文件上传成功！', { id: loadingToast })
@@ -75,12 +75,25 @@ export function HomePage() {
     <div className="max-w-6xl mx-auto space-y-8 animate-fade-in">
       {/* Header */}
       <div className="text-center space-y-4">
+        {/* 模式状态指示 */}
+        <div className="flex justify-center">
+          <div className={`inline-flex items-center space-x-2 px-4 py-2 rounded-full text-sm ${
+            mcpEnabled && mcpConnected 
+              ? 'bg-green-100 text-green-700 dark:bg-green-900/20 dark:text-green-400'
+              : 'bg-gray-100 text-gray-700 dark:bg-gray-800 dark:text-gray-400'
+          }`}>
+            <span>{mcpEnabled && mcpConnected ? '🐍 MCP增强模式' : '🔧 本地基础模式'}</span>
+          </div>
+        </div>
+      </div>
+      
+      <div className="text-center space-y-4">
         <div className="flex items-center justify-center space-x-3">
           <FileSpreadsheet className="h-12 w-12 text-primary" />
           <h1 className="text-4xl font-bold text-foreground">Excel智能体</h1>
         </div>
         <p className="text-xl text-muted-foreground max-w-2xl mx-auto">
-          基于人工智能的Excel数据分析工具，让数据洞察变得简单高效
+          基于人工智能的Excel数据分析工具，{mcpEnabled && mcpConnected ? '支持Python后端增强分析' : '纯JavaScript本地分析'}
         </p>
       </div>
 
@@ -91,7 +104,7 @@ export function HomePage() {
             <BarChart3 className="h-8 w-8 text-primary mx-auto mb-2" />
             <CardTitle className="text-lg">智能分析</CardTitle>
             <CardDescription>
-              AI驱动的数据分析，自动生成洞察和可视化
+              {mcpEnabled && mcpConnected ? 'Python AI驱动的深度数据分析' : 'JavaScript本地数据分析'}
             </CardDescription>
           </CardHeader>
         </Card>
@@ -111,7 +124,7 @@ export function HomePage() {
             <Settings className="h-8 w-8 text-primary mx-auto mb-2" />
             <CardTitle className="text-lg">灵活配置</CardTitle>
             <CardDescription>
-              可调节AI参数，满足不同分析需求
+              支持MCP和本地双模式，{mcpEnabled && mcpConnected ? '可调节AI参数' : '轻量级部署'}
             </CardDescription>
           </CardHeader>
         </Card>
@@ -239,9 +252,9 @@ export function HomePage() {
               <ul className="list-disc list-inside space-y-2 text-sm text-muted-foreground">
                 <li>多工作表支持和快速切换</li>
                 <li>自定义图表创建和配置</li>
-                <li>AI参数调节和优化</li>
-                <li>数据质量检查和建议</li>
-                <li>分析结果导出和分享</li>
+                <li>{mcpEnabled && mcpConnected ? 'Python MCP后端增强分析' : 'JavaScript本地轻量分析'}</li>
+                <li>{mcpEnabled && mcpConnected ? 'AI参数调节和优化' : '基础数据统计和图表'}</li>
+                <li>{mcpEnabled && mcpConnected ? '专业级分析报告' : '简化分析结果'}</li>
               </ul>
             </div>
           </div>

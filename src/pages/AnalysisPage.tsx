@@ -2,30 +2,32 @@ import { useState } from 'react'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '../components/ui/Card'
 import { Button } from '../components/ui/Button'
 import { useAppStore } from '../stores/appStore'
-import { ExcelProcessor } from '../utils/excelProcessor'
-import { DataAnalyzer } from '../utils/dataAnalyzer'
-import { LLMService } from '../utils/llmService'
-import { ChartGenerator } from '../utils/chartGenerator'
-import { AlertCircle, BarChart3, Brain, CheckCircle, Clock, FileSpreadsheet } from 'lucide-react'
+import { ExcelService } from '../services/excelService'
+import { MCPService } from '../services/mcpService'
+import { LocalAnalysisService } from '../services/localAnalysisService'
+import { StageCard } from '../components/analysis/StageCard'
+import { ChartViewer } from '../components/charts/ChartViewer'
+import { FileSpreadsheet, Brain, BarChart3, Target } from 'lucide-react'
 import toast from 'react-hot-toast'
-import Plot from 'react-plotly.js'
 
 export function AnalysisPage() {
   const { 
     excelData, 
+    mcpEnabled,
+    mcpConnected,
     llmSettings,
     stage1Result, 
     stage2Result, 
     stage3Result,
+    stage2Question,
+    stage3Question,
     setStageResult,
+    setStageQuestion,
     setIsProcessing,
     isProcessing 
   } = useAppStore()
 
-  const [questions, setQuestions] = useState({
-    stage2: '',
-    stage3: ''
-  })
+  const mcpService = new MCPService('http://localhost:8080')
 
   if (!excelData) {
     return (
@@ -46,43 +48,61 @@ export function AnalysisPage() {
     )
   }
 
-  const currentSheet = ExcelProcessor.getCurrentSheetData(excelData)
+  const currentSheet = ExcelService.getCurrentSheetData(excelData)
   if (!currentSheet) {
     return <div>无法获取当前工作表数据</div>
+  }
+
+  // 准备MCP格式的文件数据
+  const prepareFileDataForMCP = () => {
+    return {
+      filename: excelData.filename,
+      dataframe: currentSheet.data,
+      columns: currentSheet.columns,
+      shape: currentSheet.shape,
+      dtypes: Object.fromEntries(
+        Object.entries(currentSheet.dtypes).map(([col, type]) => [
+          col, 
+          type === 'number' ? 'float64' : type === 'date' ? 'datetime64[ns]' : 'object'
+        ])
+      ),
+      current_sheet: currentSheet.name,
+      sheet_names: excelData.sheets.map(s => s.name)
+    }
   }
 
   // 阶段一：数据摘要
   const handleStage1 = async () => {
     setIsProcessing(true)
-    const loadingToast = toast.loading('正在生成数据摘要...')
 
     try {
       setStageResult(1, { status: 'processing', message: '正在处理...' })
       
-      // 模拟处理延迟
-      await new Promise(resolve => setTimeout(resolve, 1000))
+      let result
       
-      const summary = ExcelProcessor.getDataSummary(currentSheet)
-      const analysis = DataAnalyzer.analyzeData(currentSheet)
-      const validation = ExcelProcessor.validateData(currentSheet)
+      if (mcpEnabled && mcpConnected) {
+        // 使用MCP后端
+        const fileData = prepareFileDataForMCP()
+        result = await mcpService.getDataSummary(fileData)
+      } else {
+        // 使用本地分析
+        result = LocalAnalysisService.getDataSummary(currentSheet)
+      }
       
-      setStageResult(1, {
-        status: 'success',
-        message: '数据摘要生成完成',
-        data: {
-          summary,
-          insights: analysis.insights,
-        }
-      })
+      setStageResult(1, result)
       
-      toast.success('阶段一完成！', { id: loadingToast })
+      if (result.status === 'success') {
+        toast.success('阶段一完成！')
+      } else {
+        toast.error('阶段一执行失败')
+      }
     } catch (error) {
       setStageResult(1, {
         status: 'error',
         message: '数据摘要生成失败',
         error: error instanceof Error ? error.message : '未知错误'
       })
-      toast.error('阶段一执行失败', { id: loadingToast })
+      toast.error('阶段一执行失败')
     } finally {
       setIsProcessing(false)
     }
@@ -90,48 +110,42 @@ export function AnalysisPage() {
 
   // 阶段二：AI分析
   const handleStage2 = async () => {
-    if (!questions.stage2.trim()) {
+    if (!stage2Question.trim()) {
       toast.error('请输入分析问题')
       return
     }
 
     setIsProcessing(true)
-    const loadingToast = toast.loading('正在进行AI分析...')
 
     try {
       setStageResult(2, { status: 'processing', message: '正在处理...' })
       
-      const llmService = new LLMService(llmSettings)
-      const dataContent = stage1Result?.data?.summary || ExcelProcessor.getDataSummary(currentSheet)
+      let result
       
-      // 生成分析结果
-      const analysis = await llmService.generateDataAnalysis(dataContent, questions.stage2)
+      if (mcpEnabled && mcpConnected) {
+        // 使用MCP后端进行AI分析
+        const fileData = prepareFileDataForMCP()
+        const enhancedQuestion = `【阶段二预分析】${stage2Question}\n\n请生成既包含可视化图表又包含统计分析的代码，重点关注有助于后续深度分析的数据洞察。`
+        result = await mcpService.analyzeExcelData(fileData, enhancedQuestion)
+      } else {
+        // 使用本地分析
+        result = LocalAnalysisService.analyzeData(currentSheet, stage2Question)
+      }
       
-      // 生成图表建议
-      const chartSuggestion = await llmService.generateCodeSuggestion(dataContent, questions.stage2)
+      setStageResult(2, result)
       
-      // 自动生成一些图表
-      const autoCharts = ChartGenerator.generateAutoCharts(currentSheet)
-      const chartJsons = autoCharts.map(chart => JSON.stringify(ChartGenerator.convertToPlotlyFormat(chart)))
-      
-      setStageResult(2, {
-        status: 'success',
-        message: `AI分析完成，生成了${autoCharts.length}个图表`,
-        data: {
-          summary: analysis,
-          charts: chartJsons,
-          insights: [chartSuggestion],
-        }
-      })
-      
-      toast.success('阶段二完成！', { id: loadingToast })
+      if (result.status === 'success') {
+        toast.success('阶段二完成！')
+      } else {
+        toast.error('阶段二执行失败')
+      }
     } catch (error) {
       setStageResult(2, {
         status: 'error',
         message: 'AI分析失败',
         error: error instanceof Error ? error.message : '未知错误'
       })
-      toast.error('阶段二执行失败', { id: loadingToast })
+      toast.error('阶段二执行失败')
     } finally {
       setIsProcessing(false)
     }
@@ -139,45 +153,43 @@ export function AnalysisPage() {
 
   // 阶段三：深度分析
   const handleStage3 = async () => {
-    if (!questions.stage3.trim()) {
+    if (!stage3Question.trim()) {
       toast.error('请输入深度分析问题')
       return
     }
 
     setIsProcessing(true)
-    const loadingToast = toast.loading('正在进行深度分析...')
 
     try {
       setStageResult(3, { status: 'processing', message: '正在处理...' })
       
-      const llmService = new LLMService(llmSettings)
+      let result
       
-      // 构建深度分析上下文
-      const context = `
-        阶段一数据摘要：${stage1Result?.data?.summary || ''}
-        阶段二分析结果：${stage2Result?.data?.summary || ''}
-        阶段二发现洞察：${stage2Result?.data?.insights?.join('\n') || ''}
-      `
+      if (mcpEnabled && mcpConnected && stage2Result) {
+        // 使用MCP后端进行深度分析
+        const dataSummary = stage1Result?.data?.summary || ''
+        result = await mcpService.generateDeepAnalysis(stage2Question, stage3Question, stage2Result, dataSummary)
+      } else {
+        // 本地模式的简化深度分析
+        const contextualQuestion = `基于前面的分析结果，${stage3Question}`
+        result = LocalAnalysisService.analyzeData(currentSheet, contextualQuestion)
+        result.data!.summary = `## 深度分析报告\n\n${result.data!.summary}\n\n**注意**: 当前使用本地分析模式，功能有限。启用MCP模式可获得更深入的AI洞察。`
+      }
       
-      const deepAnalysis = await llmService.generateDataAnalysis(context, 
-        `基于前面的分析结果，请深入分析：${questions.stage3}`)
+      setStageResult(3, result)
       
-      setStageResult(3, {
-        status: 'success',
-        message: '深度分析完成',
-        data: {
-          summary: deepAnalysis,
-        }
-      })
-      
-      toast.success('阶段三完成！', { id: loadingToast })
+      if (result.status === 'success') {
+        toast.success('阶段三完成！')
+      } else {
+        toast.error('阶段三执行失败')
+      }
     } catch (error) {
       setStageResult(3, {
         status: 'error',
         message: '深度分析失败',
         error: error instanceof Error ? error.message : '未知错误'
       })
-      toast.error('阶段三执行失败', { id: loadingToast })
+      toast.error('阶段三执行失败')
     } finally {
       setIsProcessing(false)
     }
@@ -187,24 +199,36 @@ export function AnalysisPage() {
     setStageResult(stage, null)
     if (stage <= 2) setStageResult(3, null)
     if (stage === 1) setStageResult(2, null)
-  }
-
-  const getStageIcon = (result: typeof stage1Result) => {
-    if (!result) return <Clock className="h-5 w-5 text-muted-foreground" />
-    if (result.status === 'processing') return <div className="animate-spin rounded-full h-5 w-5 border-b-2 border-primary"></div>
-    if (result.status === 'success') return <CheckCircle className="h-5 w-5 text-green-500" />
-    return <AlertCircle className="h-5 w-5 text-red-500" />
-  }
-
-  const getStageStatus = (result: typeof stage1Result) => {
-    if (!result) return '待执行'
-    if (result.status === 'processing') return '执行中'
-    if (result.status === 'success') return '已完成'
-    return '执行失败'
+    if (stage === 2) setStageQuestion(3, '')
+    if (stage === 1) {
+      setStageQuestion(2, '')
+      setStageQuestion(3, '')
+    }
   }
 
   return (
     <div className="max-w-6xl mx-auto space-y-6">
+      {/* 页面标题 */}
+      <div className="flex items-center justify-between">
+        <div>
+          <h1 className="text-3xl font-bold">数据分析</h1>
+          <p className="text-muted-foreground mt-2">
+            分阶段进行智能数据分析和洞察发现
+          </p>
+        </div>
+        
+        {/* 模式指示器 */}
+        <div className="flex items-center space-x-2 text-sm">
+          <div className={`px-3 py-1 rounded-full ${
+            mcpEnabled && mcpConnected 
+              ? 'bg-green-100 text-green-700 dark:bg-green-900/20 dark:text-green-400'
+              : 'bg-gray-100 text-gray-700 dark:bg-gray-800 dark:text-gray-400'
+          }`}>
+            {mcpEnabled && mcpConnected ? '🐍 MCP模式' : '🔧 本地模式'}
+          </div>
+        </div>
+      </div>
+
       {/* 文件信息 */}
       <Card>
         <CardHeader>
@@ -236,222 +260,92 @@ export function AnalysisPage() {
       </Card>
 
       {/* 阶段一：数据摘要 */}
-      <Card>
-        <CardHeader>
-          <CardTitle className="flex items-center justify-between">
-            <div className="flex items-center space-x-2">
-              {getStageIcon(stage1Result)}
-              <span>阶段一：数据摘要</span>
-              <span className="text-sm text-muted-foreground">({getStageStatus(stage1Result)})</span>
-            </div>
-            {stage1Result && (
-              <Button variant="outline" size="sm" onClick={() => resetStage(1)}>
-                重置
-              </Button>
-            )}
-          </CardTitle>
-          <CardDescription>
-            自动分析数据结构、类型和基本统计信息
-          </CardDescription>
-        </CardHeader>
-        <CardContent>
-          {!stage1Result ? (
-            <Button onClick={handleStage1} disabled={isProcessing}>
-              <BarChart3 className="h-4 w-4 mr-2" />
-              开始数据摘要分析
-            </Button>
-          ) : stage1Result.status === 'success' ? (
-            <div className="space-y-4">
-              <div className="p-4 bg-muted rounded-lg">
-                <h4 className="font-medium mb-2">数据摘要</h4>
-                <pre className="text-sm text-muted-foreground whitespace-pre-wrap">
-                  {stage1Result.data?.summary}
-                </pre>
-              </div>
-              {stage1Result.data?.insights && (
-                <div className="p-4 bg-blue-50 dark:bg-blue-950/20 rounded-lg">
-                  <h4 className="font-medium mb-2">关键洞察</h4>
-                  <ul className="text-sm space-y-1">
-                    {stage1Result.data.insights.map((insight, index) => (
-                      <li key={index} className="flex items-start space-x-2">
-                        <span className="text-blue-500 mt-1">•</span>
-                        <span>{insight}</span>
-                      </li>
-                    ))}
-                  </ul>
-                </div>
-              )}
-            </div>
-          ) : (
-            <div className="text-red-500">
-              执行失败: {stage1Result.error}
-            </div>
-          )}
-        </CardContent>
-      </Card>
+      <StageCard
+        title="阶段一：数据摘要"
+        description="自动分析数据结构、类型和基本统计信息"
+        result={stage1Result}
+        onExecute={handleStage1}
+        onReset={() => resetStage(1)}
+        executeLabel="开始数据摘要分析"
+        isProcessing={isProcessing && stage1Result?.status === 'processing'}
+      />
 
       {/* 阶段二：AI分析 */}
-      <Card>
-        <CardHeader>
-          <CardTitle className="flex items-center justify-between">
-            <div className="flex items-center space-x-2">
-              {getStageIcon(stage2Result)}
-              <span>阶段二：AI数据分析</span>
-              <span className="text-sm text-muted-foreground">({getStageStatus(stage2Result)})</span>
-            </div>
-            {stage2Result && (
-              <Button variant="outline" size="sm" onClick={() => resetStage(2)}>
-                重置
-              </Button>
-            )}
-          </CardTitle>
-          <CardDescription>
-            基于AI的智能数据分析和可视化生成
-          </CardDescription>
-        </CardHeader>
-        <CardContent>
-          {!stage1Result ? (
-            <div className="text-muted-foreground">请先完成阶段一</div>
-          ) : !stage2Result ? (
-            <div className="space-y-4">
-              <div>
-                <label className="block text-sm font-medium mb-2">
-                  分析问题
-                </label>
-                <textarea
-                  className="w-full p-3 border border-input rounded-md bg-background"
-                  rows={3}
-                  placeholder="例如：分析销售数据的趋势，找出异常值和关键影响因素"
-                  value={questions.stage2}
-                  onChange={(e) => setQuestions(prev => ({ ...prev, stage2: e.target.value }))}
-                />
-              </div>
-              <Button 
-                onClick={handleStage2} 
-                disabled={isProcessing || !questions.stage2.trim()}
-              >
-                <Brain className="h-4 w-4 mr-2" />
-                开始AI分析
-              </Button>
-            </div>
-          ) : stage2Result.status === 'success' ? (
-            <div className="space-y-6">
-              <div className="p-4 bg-muted rounded-lg">
-                <h4 className="font-medium mb-2">AI分析结果</h4>
-                <div className="text-sm whitespace-pre-wrap">
-                  {stage2Result.data?.summary}
-                </div>
-              </div>
-              
-              {stage2Result.data?.charts && stage2Result.data.charts.length > 0 && (
-                <div>
-                  <h4 className="font-medium mb-4">自动生成的图表</h4>
-                  <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-                    {stage2Result.data.charts.map((chartJson, index) => {
-                      try {
-                        const chartData = JSON.parse(chartJson)
-                        return (
-                          <div key={index} className="border border-border rounded-lg p-4">
-                            <Plot
-                              data={chartData.data}
-                              layout={{
-                                ...chartData.layout,
-                                autosize: true,
-                                margin: { l: 50, r: 50, t: 50, b: 50 },
-                              }}
-                              config={chartData.config}
-                              style={{ width: '100%', height: '400px' }}
-                              useResizeHandler={true}
-                            />
-                          </div>
-                        )
-                      } catch (error) {
-                        return (
-                          <div key={index} className="border border-border rounded-lg p-4 text-center text-muted-foreground">
-                            图表加载失败
-                          </div>
-                        )
-                      }
-                    })}
-                  </div>
-                </div>
-              )}
+      <StageCard
+        title="阶段二：AI数据分析"
+        description={`基于${mcpEnabled && mcpConnected ? 'AI' : '本地'}的智能数据分析和可视化生成`}
+        result={stage2Result}
+        onExecute={handleStage2}
+        onReset={() => resetStage(2)}
+        executeLabel="开始AI分析"
+        executeDisabled={!stage1Result || !stage2Question.trim()}
+        isProcessing={isProcessing && stage2Result?.status === 'processing'}
+      >
+        {!stage1Result ? (
+          <div className="text-muted-foreground">请先完成阶段一</div>
+        ) : (
+          <div>
+            <label className="block text-sm font-medium mb-2">
+              分析问题
+            </label>
+            <textarea
+              className="w-full p-3 border border-input rounded-md bg-background"
+              rows={3}
+              placeholder="例如：分析销售数据的趋势，找出异常值和关键影响因素"
+              value={stage2Question}
+              onChange={(e) => setStageQuestion(2, e.target.value)}
+            />
+          </div>
+        )}
+      </StageCard>
 
-              {stage2Result.data?.insights && (
-                <div className="p-4 bg-green-50 dark:bg-green-950/20 rounded-lg">
-                  <h4 className="font-medium mb-2">分析建议</h4>
-                  <div className="text-sm whitespace-pre-wrap">
-                    {stage2Result.data.insights.join('\n\n')}
-                  </div>
-                </div>
-              )}
-            </div>
-          ) : (
-            <div className="text-red-500">
-              执行失败: {stage2Result.error}
-            </div>
-          )}
-        </CardContent>
-      </Card>
+      {/* 阶段二图表展示 */}
+      {stage2Result?.status === 'success' && stage2Result.data?.charts && (
+        <ChartViewer 
+          charts={stage2Result.data.charts}
+          title="阶段二生成的图表"
+        />
+      )}
 
       {/* 阶段三：深度分析 */}
-      <Card>
-        <CardHeader>
-          <CardTitle className="flex items-center justify-between">
-            <div className="flex items-center space-x-2">
-              {getStageIcon(stage3Result)}
-              <span>阶段三：深度分析</span>
-              <span className="text-sm text-muted-foreground">({getStageStatus(stage3Result)})</span>
-            </div>
-            {stage3Result && (
-              <Button variant="outline" size="sm" onClick={() => resetStage(3)}>
-                重置
-              </Button>
+      <StageCard
+        title="阶段三：深度洞察分析"
+        description="基于前面分析结果的深度洞察和业务建议"
+        result={stage3Result}
+        onExecute={handleStage3}
+        onReset={() => resetStage(3)}
+        executeLabel="开始深度分析"
+        executeDisabled={!stage2Result || !stage3Question.trim()}
+        isProcessing={isProcessing && stage3Result?.status === 'processing'}
+      >
+        {!stage2Result ? (
+          <div className="text-muted-foreground">请先完成阶段二</div>
+        ) : (
+          <div className="space-y-4">
+            {/* 显示阶段二问题作为上下文 */}
+            {stage2Question && (
+              <div className="p-3 bg-blue-50 dark:bg-blue-950/20 rounded-lg">
+                <div className="text-sm text-blue-700 dark:text-blue-300">
+                  <strong>阶段二分析问题：</strong>{stage2Question}
+                </div>
+              </div>
             )}
-          </CardTitle>
-          <CardDescription>
-            基于前面分析结果的深度洞察和业务建议
-          </CardDescription>
-        </CardHeader>
-        <CardContent>
-          {!stage2Result ? (
-            <div className="text-muted-foreground">请先完成阶段二</div>
-          ) : !stage3Result ? (
-            <div className="space-y-4">
-              <div>
-                <label className="block text-sm font-medium mb-2">
-                  深度分析问题
-                </label>
-                <textarea
-                  className="w-full p-3 border border-input rounded-md bg-background"
-                  rows={3}
-                  placeholder="例如：基于前面的分析结果，请深入探讨异常值的业务原因，并提供改进建议"
-                  value={questions.stage3}
-                  onChange={(e) => setQuestions(prev => ({ ...prev, stage3: e.target.value }))}
-                />
-              </div>
-              <Button 
-                onClick={handleStage3} 
-                disabled={isProcessing || !questions.stage3.trim()}
-              >
-                <Brain className="h-4 w-4 mr-2" />
-                开始深度分析
-              </Button>
+            
+            <div>
+              <label className="block text-sm font-medium mb-2">
+                深度分析问题
+              </label>
+              <textarea
+                className="w-full p-3 border border-input rounded-md bg-background"
+                rows={3}
+                placeholder="例如：基于前面的分析结果，请深入探讨异常值的业务原因，并提供改进建议"
+                value={stage3Question}
+                onChange={(e) => setStageQuestion(3, e.target.value)}
+              />
             </div>
-          ) : stage3Result.status === 'success' ? (
-            <div className="p-4 bg-muted rounded-lg">
-              <h4 className="font-medium mb-2">深度分析报告</h4>
-              <div className="text-sm whitespace-pre-wrap">
-                {stage3Result.data?.summary}
-              </div>
-            </div>
-          ) : (
-            <div className="text-red-500">
-              执行失败: {stage3Result.error}
-            </div>
-          )}
-        </CardContent>
-      </Card>
+          </div>
+        )}
+      </StageCard>
     </div>
   )
 }

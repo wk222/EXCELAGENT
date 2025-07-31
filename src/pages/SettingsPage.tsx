@@ -2,8 +2,8 @@ import { useState, useEffect } from 'react'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '../components/ui/Card'
 import { Button } from '../components/ui/Button'
 import { useAppStore } from '../stores/appStore'
-import { LLMService } from '../utils/llmService'
-import { Save, TestTube, RefreshCw, Moon, Sun, Monitor } from 'lucide-react'
+import { MCPSettings } from '../components/settings/MCPSettings'
+import { Save, TestTube, RefreshCw, Moon, Sun } from 'lucide-react'
 import toast from 'react-hot-toast'
 
 export function SettingsPage() {
@@ -31,9 +31,15 @@ export function SettingsPage() {
     const loadingToast = toast.loading('正在验证API设置...')
 
     try {
-      const llmService = new LLMService(localSettings)
-      const isValid = await llmService.validateApiKey()
+      // 简单的API验证
+      const response = await fetch(`${localSettings.baseUrl}/models`, {
+        headers: {
+          'Authorization': `Bearer ${localSettings.apiKey}`,
+          'Content-Type': 'application/json',
+        },
+      })
       
+      const isValid = response.ok
       setApiValid(isValid)
       
       if (isValid) {
@@ -54,11 +60,11 @@ export function SettingsPage() {
 
   const handleReset = () => {
     const defaultSettings = {
-      model: 'gpt-3.5-turbo',
+      model: 'grok-3-mini',
       temperature: 0.7,
       maxTokens: 2000,
       apiKey: '',
-      baseUrl: 'https://api.openai.com/v1',
+      baseUrl: 'http://48.210.12.198:3000/v1',
     }
     setLocalSettings(defaultSettings)
     updateLLMSettings(defaultSettings)
@@ -82,6 +88,9 @@ export function SettingsPage() {
         </p>
       </div>
 
+      {/* MCP设置 */}
+      <MCPSettings />
+
       {/* LLM设置 */}
       <Card>
         <CardHeader>
@@ -102,6 +111,7 @@ export function SettingsPage() {
                 value={localSettings.model}
                 onChange={(e) => setLocalSettings(prev => ({ ...prev, model: e.target.value }))}
               >
+                <option value="grok-3-mini">Grok-3 Mini</option>
                 <option value="gpt-3.5-turbo">GPT-3.5 Turbo</option>
                 <option value="gpt-4">GPT-4</option>
                 <option value="gpt-4-turbo-preview">GPT-4 Turbo</option>
@@ -117,7 +127,7 @@ export function SettingsPage() {
               <input
                 type="text"
                 className="w-full p-3 border border-input rounded-md bg-background"
-                placeholder="https://api.openai.com/v1"
+                placeholder="http://48.210.12.198:3000/v1"
                 value={localSettings.baseUrl}
                 onChange={(e) => setLocalSettings(prev => ({ ...prev, baseUrl: e.target.value }))}
               />
@@ -257,6 +267,9 @@ export function SettingsPage() {
             </div>
             <div className="text-muted-foreground">
               技术栈：React + TypeScript + Vite + Plotly.js + SheetJS
+            </div>
+            <div className="text-muted-foreground">
+               后端：Python MCP服务器（可选）
             </div>
             <div className="text-muted-foreground">
               © 2025 Excel智能体团队
